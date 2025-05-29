@@ -60,13 +60,13 @@ jobs:
 
       - name: Build and push backend image
         run: |
-          docker build -t ${{ steps.login-ecr.outputs.registry }}/backend:latest ./backend
-          docker push ${{ steps.login-ecr.outputs.registry }}/backend:latest
+          docker build -t ${{ steps.login-ecr.output.registry }}/backend:latest ./backend
+          docker push ${{ steps.login-ecr.output.registry }}/backend:latest
 
       - name: Build and push frontend image
         run: |
-          docker build -t ${{ steps.login-ecr.outputs.registry }}/frontend:latest ./frontend
-          docker push ${{ steps.login-ecr.outputs.registry }}/frontend:latest
+          docker build -t ${{ steps.login-ecr.output.registry }}/frontend:latest ./frontend
+          docker push ${{ steps.login-ecr.output.registry }}/frontend:latest
 
   deploy:
     name: Helm Deploy to EKS
@@ -91,17 +91,17 @@ jobs:
         uses: azure/setup-helm@v3
 
       - name: Update kubeconfig
-        run: aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+        run: aws eks update-kubeconfig --region $AWS_REGION --name ecommerce-cluster
 
       - name: Deploy backend
         run: |
           helm upgrade --install backend ./helm/backend \
-            --set image.repository=${{ steps.login-ecr.outputs.registry }}/backend,image.tag=latest
+            --set image.repository=${{ steps.login-ecr.output.registry }}/backend,image.tag=latest
 
       - name: Deploy frontend
         run: |
           helm upgrade --install frontend ./helm/frontend \
-            --set image.repository=${{ steps.login-ecr.outputs.registry }}/frontend,image.tag=latest
+            --set image.repository=${{ steps.login-ecr.output.registry }}/frontend,image.tag=latest
 
   monitoring:
     name: Install Monitoring Stack
@@ -123,7 +123,7 @@ jobs:
         uses: azure/setup-helm@v3
 
       - name: Update kubeconfig
-        run: aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+        run: aws eks update-kubeconfig --region $AWS_REGION --name ecommerce-cluster
 
       - name: Install Prometheus & Grafana
         run: |
