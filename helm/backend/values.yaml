@@ -1,0 +1,4 @@
+image: <your-ecr-uri>/backend:latest
+service:
+  type: ClusterIP
+  port: 3000

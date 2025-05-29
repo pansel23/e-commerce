@@ -1,0 +1,4 @@
+image: <your-ecr-uri>/frontend:latest
+service:
+  type: LoadBalancer
+  port: 3000
