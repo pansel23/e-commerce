@@ -35,8 +35,8 @@ jobs:
       - name: Terraform Plan
         run: terraform -chdir=terraform plan
         
-      - name: Terraform Apply
-        run: terraform -chdir=terraform apply
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve
         
   docker:
     name: Build & Push Docker Images to ECR
