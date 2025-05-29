@@ -1,26 +1,26 @@
-name: ci-cd-pipeline
+name: Full DevOps CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-2
+  CLUSTER_NAME: ecommerce-cluster
 
 jobs:
-  build-and-deploy:
+  terraform:
+    name: Provision Infrastructure with Terraform
     runs-on: ubuntu-latest
-    env:
-      ECR_REPO: ${{ secrets.ECR_REPO }}
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+
     steps:
-      - name: Checkout code
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
@@ -37,33 +37,93 @@ jobs:
       - name: Terraform Apply
         run: terraform -chdir=terraform apply -auto-approve
 
+  docker:
+    name: Build & Push Docker Images to ECR
+    needs: terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Build, tag, and push backend image
+      - name: Build and push backend image
         run: |
-          docker build -t $ECR_REPO/backend:latest ./backend
-          docker push $ECR_REPO/backend:latest
+          docker build -t ${{ steps.login-ecr.outputs.registry }}/backend:latest ./backend
+          docker push ${{ steps.login-ecr.outputs.registry }}/backend:latest
 
-      - name: Build, tag, and push frontend image
+      - name: Build and push frontend image
         run: |
-          docker build -t $ECR_REPO/frontend:latest ./frontend
-          docker push $ECR_REPO/frontend:latest
+          docker build -t ${{ steps.login-ecr.outputs.registry }}/frontend:latest ./frontend
+          docker push ${{ steps.login-ecr.outputs.registry }}/frontend:latest
 
-      - name: Update Helm values with new image tags
-        run: |
-          sed -i "s|image:.*backend:.*|image: $ECR_REPO/backend:latest|" helm/backend/values.yaml
-          sed -i "s|image:.*frontend:.*|image: $ECR_REPO/frontend:latest|" helm/frontend/values.yaml
+  deploy:
+    name: Helm Deploy to EKS
+    needs: docker
+    runs-on: ubuntu-latest
 
-      - name: Commit Helm updates
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+
+      - name: Deploy backend
         run: |
-          git config --global user.email "ci@github.com"
-          git config --global user.name "GitHub Actions"
-          git add helm/*/values.yaml
-          git commit -m "Update Helm image tags"
-          git push origin main
-      
+          helm upgrade --install backend ./helm/backend \
+            --set image.repository=${{ steps.login-ecr.outputs.registry }}/backend,image.tag=latest
+
+      - name: Deploy frontend
+        run: |
+          helm upgrade --install frontend ./helm/frontend \
+            --set image.repository=${{ steps.login-ecr.outputs.registry }}/frontend,image.tag=latest
+
+  monitoring:
+    name: Install Monitoring Stack
+    needs: deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+
       - name: Install Prometheus & Grafana
         run: |
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
